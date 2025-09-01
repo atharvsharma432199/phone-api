@@ -4,9 +4,29 @@ import sqlite3
 import time
 from functools import lru_cache
 import database as db
+import os
+import subprocess
 
 app = Flask(__name__)
 CORS(app)
+
+# Check and initialize database on startup
+def initialize_database():
+    """Initialize database if not exists"""
+    if not os.path.exists('phone_data.db'):
+        print("📦 Database not found. Initializing...")
+        try:
+            result = subprocess.run(['python', 'init_database.py'], 
+                                  capture_output=True, text=True)
+            if result.returncode == 0:
+                print("✅ Database initialized successfully")
+            else:
+                print(f"❌ Database initialization failed: {result.stderr}")
+        except Exception as e:
+            print(f"❌ Error initializing database: {str(e)}")
+
+# Initialize on app start
+initialize_database()
 
 @lru_cache(maxsize=1000)
 def find_person_info(phone_query):
@@ -142,7 +162,7 @@ def api_status():
             "status": "active",
             "database": {
                 "records": record_count,
-                "last_updated": "2024-01-01"  # You can add actual timestamp logic
+                "last_updated": "2024-01-01"
             },
             "api": {
                 "total_keys": key_count,
@@ -160,9 +180,9 @@ def api_status():
             "message": f"Error getting status: {str(e)}"
         }), 500
 
-@app.route('/api/admin/stats')
-def admin_stats():
-    """Admin statistics endpoint"""
+@app.route('/api/admin/initdb')
+def admin_init_db():
+    """Admin endpoint to initialize database"""
     admin_user = request.args.get('user')
     admin_pass = request.args.get('pass')
     
@@ -172,14 +192,33 @@ def admin_stats():
             "message": "Admin authentication failed"
         }), 401
     
-    keys = db.get_all_api_keys()
-    usage_stats = db.get_usage_stats()
-    
-    return jsonify({
-        "status": "success",
-        "api_keys": keys,
-        "usage_statistics": usage_stats
-    })
+    try:
+        result = subprocess.run(['python', 'init_database.py'], 
+                              capture_output=True, text=True, timeout=300)
+        
+        if result.returncode == 0:
+            return jsonify({
+                "status": "success",
+                "message": "Database initialized successfully",
+                "output": result.stdout
+            })
+        else:
+            return jsonify({
+                "status": "error",
+                "message": "Database initialization failed",
+                "error": result.stderr
+            }), 500
+            
+    except subprocess.TimeoutExpired:
+        return jsonify({
+            "status": "error",
+            "message": "Database initialization timeout"
+        }), 500
+    except Exception as e:
+        return jsonify({
+            "status": "error",
+            "message": f"Error: {str(e)}"
+        }), 500
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
