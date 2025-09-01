@@ -5,31 +5,25 @@ import os
 import requests
 from datetime import datetime
 import sys
-from config import GOOGLE_DRIVE_FILE_ID
 
 def download_from_drive():
     """Download file from Google Drive with progress"""
     try:
-        download_url = f"https://drive.google.com/uc?id={GOOGLE_DRIVE_FILE_ID}&export=download"
+        file_id = "1C726IZypnLOY85daHXiGQv4c7kfoXHOT"
+        download_url = f"https://drive.google.com/uc?id={file_id}&export=download"
         
         print("📥 Downloading data from Google Drive...")
         
-        # Download using requests with progress
-        response = requests.get(download_url, stream=True)
-        total_size = int(response.headers.get('content-length', 0))
+        # Download using gdown (simpler approach)
+        gdown.download(download_url, 'temp_data.json', quiet=False)
         
-        with open('temp_data.json', 'wb') as f:
-            downloaded = 0
-            for data in response.iter_content(chunk_size=8192):
-                downloaded += len(data)
-                f.write(data)
-                if total_size > 0:
-                    progress = (downloaded / total_size) * 100
-                    print(f"Download progress: {progress:.1f}%", end='\r')
-        
-        print("\n✅ Download completed!")
-        return True
-        
+        if os.path.exists('temp_data.json'):
+            print("✅ Download completed!")
+            return True
+        else:
+            print("❌ Download failed!")
+            return False
+            
     except Exception as e:
         print(f"❌ Download error: {str(e)}")
         return False
@@ -37,6 +31,10 @@ def download_from_drive():
 def create_database():
     """Create SQLite database from JSON data"""
     try:
+        if not os.path.exists('temp_data.json'):
+            print("❌ No JSON file found")
+            return False
+        
         print("📊 Reading JSON data...")
         with open('temp_data.json', 'r', encoding='utf-8') as f:
             data = json.load(f)
@@ -71,12 +69,11 @@ def create_database():
         cursor.execute('CREATE INDEX IF NOT EXISTS idx_other_phone ON phone_data(otherNumber)')
         
         print("📝 Inserting data...")
-        batch_size = 1000
         total_records = len(data)
+        inserted_count = 0
         
-        for i in range(0, total_records, batch_size):
-            batch = data[i:i+batch_size]
-            for record in batch:
+        for record in data:
+            try:
                 cursor.execute('''
                 INSERT OR IGNORE INTO phone_data 
                 (name, fathersName, phoneNumber, otherNumber, passportNumber, 
@@ -97,12 +94,19 @@ def create_database():
                     record.get('state'),
                     record.get('town')
                 ))
-            
-            conn.commit()
-            progress = min(i + batch_size, total_records)
-            print(f"✅ Inserted {progress}/{total_records} records ({progress/total_records*100:.1f}%)")
+                inserted_count += 1
+                
+                # Show progress every 1000 records
+                if inserted_count % 1000 == 0:
+                    print(f"✅ Inserted {inserted_count}/{total_records} records")
+                    
+            except Exception as e:
+                print(f"⚠️ Error inserting record: {str(e)}")
+                continue
         
-        # Show statistics
+        conn.commit()
+        
+        # Show final statistics
         cursor.execute('SELECT COUNT(*) FROM phone_data')
         count = cursor.fetchone()[0]
         print(f"🎉 Database created with {count} records!")
