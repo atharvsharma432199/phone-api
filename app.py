@@ -7,6 +7,7 @@ import database as db
 import os
 import subprocess
 import threading
+import atexit
 
 app = Flask(__name__)
 CORS(app)
@@ -43,11 +44,13 @@ def check_and_initialize_database():
             database_initialized = True
             return True
 
-# Check database on startup
-@app.before_first_request
-def initialize_on_startup():
-    """Initialize database before first request"""
-    check_and_initialize_database()
+# Initialize database on app startup
+@app.before_request
+def before_first_request():
+    """Initialize before first request (compatible with all Flask versions)"""
+    global database_initialized
+    if not database_initialized:
+        check_and_initialize_database()
 
 @lru_cache(maxsize=1000)
 def find_person_info(phone_query):
@@ -287,6 +290,11 @@ def get_record_count():
         return count
     except:
         return 0
+
+# Initialize database when app starts
+with app.app_context():
+    print("🚀 Starting application...")
+    check_and_initialize_database()
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
