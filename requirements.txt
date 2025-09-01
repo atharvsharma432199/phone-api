@@ -4,3 +4,4 @@ flask-cors==4.0.0
 python-telegram-bot==20.7
 gdown==4.7.1
 requests==2.31.0
+sqlite3
