@@ -1,0 +1,30 @@
+services:
+  - type: web
+    name: phone-api
+    env: python
+    plan: free
+    buildCommand: |
+      pip install -r requirements.txt
+      python init_database.py
+    startCommand: gunicorn app:app
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: BOT_TOKEN
+        value: your_telegram_bot_token_here
+      - key: ADMIN_CHAT_ID
+        value: your_chat_id_here
+
+  - type: worker
+    name: telegram-bot
+    env: python
+    plan: free
+    buildCommand: pip install -r requirements.txt
+    startCommand: python start_bot.py
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.10.12
+      - key: BOT_TOKEN
+        value: your_telegram_bot_token_here
+      - key: ADMIN_CHAT_ID
+        value: your_chat_id_here
