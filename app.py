@@ -6,27 +6,48 @@ from functools import lru_cache
 import database as db
 import os
 import subprocess
+import threading
 
 app = Flask(__name__)
 CORS(app)
 
-# Check and initialize database on startup
-def initialize_database():
-    """Initialize database if not exists"""
-    if not os.path.exists('phone_data.db'):
-        print("📦 Database not found. Initializing...")
-        try:
-            result = subprocess.run(['python', 'init_database.py'], 
-                                  capture_output=True, text=True)
-            if result.returncode == 0:
-                print("✅ Database initialized successfully")
-            else:
-                print(f"❌ Database initialization failed: {result.stderr}")
-        except Exception as e:
-            print(f"❌ Error initializing database: {str(e)}")
+# Global variable to track database status
+database_initialized = False
+initialization_lock = threading.Lock()
 
-# Initialize on app start
-initialize_database()
+def check_and_initialize_database():
+    """Check if database exists and initialize if not"""
+    global database_initialized
+    
+    with initialization_lock:
+        if database_initialized:
+            return True
+            
+        if not os.path.exists('phone_data.db'):
+            print("📦 Database not found. Initializing...")
+            try:
+                result = subprocess.run(['python', 'init_database.py'], 
+                                      capture_output=True, text=True, timeout=300)
+                if result.returncode == 0:
+                    print("✅ Database initialized successfully")
+                    database_initialized = True
+                    return True
+                else:
+                    print(f"❌ Database initialization failed: {result.stderr}")
+                    return False
+            except Exception as e:
+                print(f"❌ Error initializing database: {str(e)}")
+                return False
+        else:
+            print("✅ Database already exists")
+            database_initialized = True
+            return True
+
+# Check database on startup
+@app.before_first_request
+def initialize_on_startup():
+    """Initialize database before first request"""
+    check_and_initialize_database()
 
 @lru_cache(maxsize=1000)
 def find_person_info(phone_query):
@@ -77,6 +98,10 @@ def find_person_info(phone_query):
             }
         return None
         
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e):
+            print("❌ Phone data table not found. Database may need initialization.")
+        return None
     except Exception as e:
         print(f"Database error: {str(e)}")
         return None
@@ -84,6 +109,13 @@ def find_person_info(phone_query):
 @app.route('/')
 def api_root():
     """Main API endpoint with query parameters"""
+    # Check if database is initialized
+    if not check_and_initialize_database():
+        return jsonify({
+            "status": "error",
+            "message": "Database initialization failed. Please try again later."
+        }), 500
+    
     start_time = time.time()
     api_key = request.args.get('apikey', '').strip()
     search_query = request.args.get('query', '').strip()
@@ -146,6 +178,13 @@ def api_root():
 def api_status():
     """Check API status"""
     try:
+        # Check if database is initialized first
+        if not check_and_initialize_database():
+            return jsonify({
+                "status": "error",
+                "message": "Database not initialized"
+            }), 500
+        
         # Get phone database stats
         conn = sqlite3.connect('phone_data.db')
         cursor = conn.cursor()
@@ -162,7 +201,7 @@ def api_status():
             "status": "active",
             "database": {
                 "records": record_count,
-                "last_updated": "2024-01-01"
+                "initialized": True
             },
             "api": {
                 "total_keys": key_count,
@@ -174,6 +213,18 @@ def api_status():
             "message": "API is running successfully"
         })
         
+    except sqlite3.OperationalError as e:
+        if "no such table" in str(e):
+            return jsonify({
+                "status": "error",
+                "message": "Database table not found. Please initialize database.",
+                "initialization_url": "/api/admin/initdb?user=admin&pass=admin123"
+            }), 500
+        else:
+            return jsonify({
+                "status": "error",
+                "message": f"Database error: {str(e)}"
+            }), 500
     except Exception as e:
         return jsonify({
             "status": "error",
@@ -197,22 +248,27 @@ def admin_init_db():
                               capture_output=True, text=True, timeout=300)
         
         if result.returncode == 0:
+            # Reset initialization flag
+            global database_initialized
+            database_initialized = True
+            
             return jsonify({
                 "status": "success",
                 "message": "Database initialized successfully",
-                "output": result.stdout
+                "records": get_record_count(),
+                "output": result.stdout[-500:]  # Last 500 characters only
             })
         else:
             return jsonify({
                 "status": "error",
                 "message": "Database initialization failed",
-                "error": result.stderr
+                "error": result.stderr[-500:]  # Last 500 characters only
             }), 500
             
     except subprocess.TimeoutExpired:
         return jsonify({
             "status": "error",
-            "message": "Database initialization timeout"
+            "message": "Database initialization timeout (5 minutes)"
         }), 500
     except Exception as e:
         return jsonify({
@@ -220,6 +276,20 @@ def admin_init_db():
             "message": f"Error: {str(e)}"
         }), 500
 
+def get_record_count():
+    """Get number of records in phone_data table"""
+    try:
+        conn = sqlite3.connect('phone_data.db')
+        cursor = conn.cursor()
+        cursor.execute('SELECT COUNT(*) FROM phone_data')
+        count = cursor.fetchone()[0]
+        conn.close()
+        return count
+    except:
+        return 0
+
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 5000))
+    # Initialize database on startup
+    check_and_initialize_database()
     app.run(host='0.0.0.0', port=port, debug=False)
